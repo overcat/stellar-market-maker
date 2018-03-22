@@ -24,7 +24,7 @@ class MarketMaker(object):
         self.network = 'public'
 
     def get_price(self):
-        # 设定初始价格，需要改进，比如考虑深度之类的
+        # 获取当前市场的价格，这里获取的是买一与卖一价，视情况改进，比如考虑市场深度？
         params = {
             "selling_asset_type": self.selling_asset.type,
             "selling_asset_code": self.selling_asset.code,
@@ -38,11 +38,13 @@ class MarketMaker(object):
         return {'bid': data['bids'][0]['price'], 'ask': data['asks'][0]['price']}
 
     def get_account_data(self):
+        # 获取账户信息
         account = Address(address=self.address, network=self.network, horizon=self.horizon_url)
         account.get()
         return account
 
     def get_balance(self):
+        # 获取当前交易对的余额信息
         handled_balance = {}
         balances_data = self.get_account_data().balances
         for balance in balances_data:
@@ -56,6 +58,7 @@ class MarketMaker(object):
         return handled_balance
 
     def handle_offers_data(self):
+        # 对当前交易对的挂单信息进行处理，使其易于理解与使用
         handled_offers_data = []
         offers_data = self.get_account_data().offers()['_embedded']['records']
         for data in offers_data:
@@ -91,6 +94,9 @@ class MarketMaker(object):
         return handled_offers_data
 
     def create_offers(self):
+        # 创建挂单。这里是两个订单
+        # 买入价格 = 买一价 * (1 - buying_rate)
+        # 卖出价格 = 卖一价 * (1 + selling_rate)
         market_price = self.get_price()
         builder = Builder(secret=self.seed, network=self.network, horizon=self.horizon_url)
         # 卖出 base_asset
@@ -113,6 +119,7 @@ class MarketMaker(object):
         builder.submit()
 
     def cancel_all_offers(self):
+        # 取消当前交易对的所有委单
         offers = self.handle_offers_data()
         builder = Builder(secret=self.seed, network=self.network, horizon=self.horizon_url)
         for offer in offers:
@@ -127,6 +134,7 @@ class MarketMaker(object):
         builder.submit()
 
     def print_offer(self):
+        # 显示当前委单
         offers = self.handle_offers_data()
         for offer in offers:
             print("{type} {amount} {base_asset}, {price} {counter_asset}/{base_asset}".format(
@@ -138,6 +146,7 @@ class MarketMaker(object):
 
         self.cancel_all_offers()
 
+        # 挂两个单，只有在两个委单都成交后才会重新挂单，视情况重写，目前测试用的是这样的，毕竟这样风险小。
         while True:
             try:
                 offers = self.handle_offers_data()
