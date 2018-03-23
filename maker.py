@@ -10,11 +10,14 @@ from stellar_base.address import Address
 
 class MarketMaker(object):
     def __init__(self, config):
-        self.seed = os.environ.get('STELLAR_SEED') or config.get('stellar_seed')
+        self.seed = os.environ.get(
+            'STELLAR_SEED') or config.get('stellar_seed')
         self.keypair = Keypair.from_seed(self.seed)
         self.address = self.keypair.address().decode()
-        self.selling_asset = Asset(config['base_asset']['code'], config['base_asset']['issuer'])
-        self.buying_asset = Asset(config['counter_asset']['code'], config['counter_asset']['issuer'])
+        self.selling_asset = Asset(
+            config['base_asset']['code'], config['base_asset']['issuer'])
+        self.buying_asset = Asset(
+            config['counter_asset']['code'], config['counter_asset']['issuer'])
         self.buying_amount = config['buying_amount']
         self.buying_rate = config['buying_rate']
         self.selling_amount = config['selling_amount']
@@ -22,6 +25,8 @@ class MarketMaker(object):
         self.horizon_url = config['horizon']
         self.horizon = Horizon(config['horizon'])
         self.network = 'public'
+        self.selling_base_price = 0
+        self.buying_base_price = 0
 
     def get_price(self):
         # 获取当前市场的价格，这里获取的是买一与卖一价，视情况改进，比如考虑市场深度？
@@ -39,7 +44,8 @@ class MarketMaker(object):
 
     def get_account_data(self):
         # 获取账户信息
-        account = Address(address=self.address, network=self.network, horizon=self.horizon_url)
+        account = Address(address=self.address,
+                          network=self.network, horizon=self.horizon_url)
         account.get()
         return account
 
@@ -66,7 +72,7 @@ class MarketMaker(object):
                 'asset_code'] == self.selling_asset.code and data['selling'][
                     'asset_issuer'] == self.selling_asset.issuer) and (
                     (data['buying']['asset_type'] == 'native' and self.buying_asset.type == 'native') or data['buying'][
-                'asset_code'] == self.buying_asset.code and data['buying']['asset_issuer'] == self.buying_asset.issuer):
+                        'asset_code'] == self.buying_asset.code and data['buying']['asset_issuer'] == self.buying_asset.issuer):
                 handled_offer = {
                     'id': data['id'],
                     'amount': data['amount'],
@@ -98,15 +104,20 @@ class MarketMaker(object):
         # 买入价格 = 买一价 * (1 - buying_rate)
         # 卖出价格 = 卖一价 * (1 + selling_rate)
         market_price = self.get_price()
-        builder = Builder(secret=self.seed, network=self.network, horizon=self.horizon_url)
+        self.selling_base_price = float(market_price['ask'])
+        self.buying_base_price = float(market_price['bid'])
+
+        builder = Builder(secret=self.seed,
+                          network=self.network, horizon=self.horizon_url)
         # 卖出 base_asset
-        selling_price = round(float(market_price['ask']) * (1 + self.selling_rate), 7)
+        selling_price = round(self.selling_base_price *
+                              (1 + self.selling_rate), 7)
         builder.append_manage_offer_op(selling_code=self.selling_asset.code, selling_issuer=self.selling_asset.issuer,
                                        buying_code=self.buying_asset.code,
                                        buying_issuer=self.buying_asset.issuer,
                                        amount=self.selling_amount, price=selling_price)
         # 买入 base_asset
-        buying_tmp_price = float(market_price['bid']) * (1 - self.buying_rate)
+        buying_tmp_price = self.buying_base_price * (1 - self.buying_rate)
         buying_price = round(1 / buying_tmp_price, 7)
         buying_amount = round(self.buying_amount * buying_tmp_price, 7)
         builder.append_manage_offer_op(selling_code=self.buying_asset.code,
@@ -121,7 +132,8 @@ class MarketMaker(object):
     def cancel_all_offers(self):
         # 取消当前交易对的所有委单
         offers = self.handle_offers_data()
-        builder = Builder(secret=self.seed, network=self.network, horizon=self.horizon_url)
+        builder = Builder(secret=self.seed,
+                          network=self.network, horizon=self.horizon_url)
         for offer in offers:
             builder.append_manage_offer_op(selling_code=self.selling_asset.code,
                                            selling_issuer=self.selling_asset.issuer,
@@ -149,12 +161,17 @@ class MarketMaker(object):
         # 挂两个单，只有在两个委单都成交后才会重新挂单，视情况重写，目前测试用的是这样的，毕竟这样风险小。
         while True:
             try:
+                market_price = self.get_price()
                 offers = self.handle_offers_data()
-                if len(offers) != 0:
-                    time.sleep(3)
-                else:
+                if len(offers) == 0:
                     self.create_offers()
                     print("New offers created")
                     self.print_offer()
+                elif float(market_price['ask']) < self.selling_base_price or float(market_price['bid']) > self.buying_base_price:
+                    self.cancel_all_offers()
+                    self.create_offers()
+                    print("New offers created")
+                    self.print_offer()
+                time.sleep(3)
             except Exception as e:
                 print(e)
